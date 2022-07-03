@@ -28,7 +28,7 @@ qram_wires = 9
 n_qaux_layers = n_qram_layers = 3
 n_qclassifier_layers = 5
 seed = 1234
-n_qrams = 2
+n_qrams = 1
 qram_epochs = 200
 qram_start_epoch = 0
 qaux_epochs = 100
@@ -52,6 +52,13 @@ for i in range(len(imgs)):
     bin = np.binary_repr(i, width=9)
     adds.append([int(char) for char in bin])
 adds = torch.FloatTensor(adds)
+
+# Make dataloader for a single qram.
+dataset = Data.TensorDataset(adds, imgs, labels)
+dataloader = Data.DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True, drop_last=False)
+train_set, val_set = torch.utils.data.random_split(dataset, [int(0.85*len(imgs[zero_indices])), len(imgs[zero_indices])-int(0.85*len(imgs[zero_indices]))])
+train_loader = Data.DataLoader(dataset=train_set, batch_size=batch_size, shuffle=True, drop_last=False)
+test_loader = Data.DataLoader(dataset=val_set, batch_size=batch_size, shuffle=True, drop_last=False)
 
 dataset = Data.TensorDataset(adds[zero_indices], imgs[zero_indices], labels[zero_indices])
 zero_dataloader = Data.DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True, drop_last=False)
@@ -140,7 +147,7 @@ class Model(torch.nn.Module):
         self.qram_layers = [qram_layers[i] for i in range(n_qrams)]
         self.qclassifier_layer = qclassifier_layer
 
-    def qram(self, imgs, adds, cls):
+    def qram(self, imgs, adds, cls=0):
         target = self.qaux_layers[cls](imgs)
         pred = self.qram_layers[cls](adds)
         return pred, target
@@ -164,7 +171,10 @@ for epoch in range(qram_start_epoch, qram_epochs):
     curr_log = f"epoch {epoch+1}/{qram_epochs}\t"
     for cls in range(n_qrams):
         losses = []
-        dataloader = [zero_dataloader, one_dataloader]
+        if n_qrams == 1:
+            dataloader = [dataloader]
+        if n_qrams == 2:
+            dataloader = [zero_dataloader, one_dataloader]
         for batch, (adds, imgs, labels) in enumerate(dataloader[cls]):
 
             opt_qrams[cls].zero_grad()
@@ -201,8 +211,12 @@ for epoch in range(qcls_start_epochs, qcls_epochs):
     curr_log = f"epoch {epoch+1}/{qcls_epochs}\t"
     train_losses = test_losses = []
     train_acc = test_acc = 0
-    train_loader = [zero_train_loader, one_train_loader]
-    test_loader = [zero_test_loader, one_test_loader]
+    if n_qrams == 1:
+        train_loader = [train_loader]
+        test_loader = [test_loader]
+    if n_qrams == 2:
+        train_loader = [zero_train_loader, one_train_loader]
+        test_loader = [zero_test_loader, one_test_loader]
 
     for cls in range(n_qrams):
         # Copy trained qram parameters.
