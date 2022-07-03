@@ -56,7 +56,7 @@ adds = torch.FloatTensor(adds)
 # Make dataloader for a single qram.
 dataset = Data.TensorDataset(adds, imgs, labels)
 dataloader = Data.DataLoader(dataset=dataset, batch_size=batch_size, shuffle=True, drop_last=False)
-train_set, val_set = torch.utils.data.random_split(dataset, [int(0.85*len(imgs[zero_indices])), len(imgs[zero_indices])-int(0.85*len(imgs[zero_indices]))])
+train_set, val_set = torch.utils.data.random_split(dataset, [int(0.85*len(imgs)), len(imgs)-int(0.85*len(imgs))])
 train_loader = Data.DataLoader(dataset=train_set, batch_size=batch_size, shuffle=True, drop_last=False)
 test_loader = Data.DataLoader(dataset=val_set, batch_size=batch_size, shuffle=True, drop_last=False)
 
