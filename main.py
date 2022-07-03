@@ -167,14 +167,16 @@ opt_qrams = [torch.optim.Adam(itertools.chain(model.qaux_layers[i].parameters(),
 # -------------------------
 print("Start training qrams...")
 
+if n_qrams == 1:
+    dataloader = [dataloader]
+elif n_qrams == 2:
+    dataloader = [zero_dataloader, one_dataloader]
+
 for epoch in range(qram_start_epoch, qram_epochs):
     curr_log = f"epoch {epoch+1}/{qram_epochs}\t"
+
     for cls in range(n_qrams):
         losses = []
-        if n_qrams == 1:
-            dataloader = [dataloader]
-        if n_qrams == 2:
-            dataloader = [zero_dataloader, one_dataloader]
         for batch, (adds, imgs, labels) in enumerate(dataloader[cls]):
 
             opt_qrams[cls].zero_grad()
@@ -188,6 +190,7 @@ for epoch in range(qram_start_epoch, qram_epochs):
 
         curr_log += f"cls{cls}-loss:{np.mean(losses):.4f}\t"
     print_and_save(curr_log, f"{log_dir}/qram_log.txt")
+    print("~~~~~~~~~~~~~~~~~`")
 
     if (epoch+1) % save_step == 0:
         torch.save({'qaux_0_state_dict': model.qaux_layers[0].state_dict(),
@@ -206,17 +209,19 @@ for epoch in range(qram_start_epoch, qram_epochs):
 # -------------------------------
 #  Phase 2: training qclassifier
 # -------------------------------
-print("Start training model...")
+print("Start training qclassifier...")
+
+if n_qrams == 1:
+    train_loader = [train_loader]
+    test_loader = [test_loader]
+elif n_qrams == 2:
+    train_loader = [zero_train_loader, one_train_loader]
+    test_loader = [zero_test_loader, one_test_loader]
+
 for epoch in range(qcls_start_epochs, qcls_epochs):
     curr_log = f"epoch {epoch+1}/{qcls_epochs}\t"
     train_losses = test_losses = []
     train_acc = test_acc = 0
-    if n_qrams == 1:
-        train_loader = [train_loader]
-        test_loader = [test_loader]
-    if n_qrams == 2:
-        train_loader = [zero_train_loader, one_train_loader]
-        test_loader = [zero_test_loader, one_test_loader]
 
     for cls in range(n_qrams):
         # Copy trained qram parameters.
