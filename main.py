@@ -190,7 +190,6 @@ for epoch in range(qram_start_epoch, qram_epochs):
 
         curr_log += f"cls{cls}-loss:{np.mean(losses):.4f}\t"
     print_and_save(curr_log, f"{log_dir}/qram_log.txt")
-    print("~~~~~~~~~~~~~~~~~`")
 
     if (epoch+1) % save_step == 0:
         torch.save({'qaux_0_state_dict': model.qaux_layers[0].state_dict(),
