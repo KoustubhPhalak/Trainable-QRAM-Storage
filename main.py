@@ -192,10 +192,10 @@ for epoch in range(qram_start_epoch, qram_epochs):
     print_and_save(curr_log, f"{log_dir}/qram_log.txt")
 
     if (epoch+1) % save_step == 0:
-        torch.save({'qaux_0_state_dict': model.qaux_layers[0].state_dict(),
-                    'qaux_1_state_dict': model.qaux_layers[1].state_dict(),
-                    'qram_0_state_dict': model.qram_layers[0].state_dict(),
-                    'qram_1_state_dict': model.qram_layers[1].state_dict()},
+        state_dict = {}
+        state_dict.update({f'qaux_{cls}_state_dict': model.qaux_layers[cls].state_dict() for cls in range(n_qrams)})
+        state_dict.update({f'qram_{cls}_state_dict': model.qram_layers[cls].state_dict() for cls in range(n_qrams)})
+        torch.save(state_dict,
                     f"{models_dir}/qrams-{epoch+1}.pth")
 
     # Fix qaux layer parameters.
