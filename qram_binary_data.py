@@ -1,3 +1,4 @@
+from distutils import extension
 import os
 import numpy as np
 import matplotlib.pyplot as plt
@@ -10,13 +11,16 @@ from sklearn.utils import shuffle
 import random
 from utils import *
 import itertools
+import operator
+import math
 
 # Declare Directory
 name = "model/binary_data"
 log_dir = f"{name}"
 models_dir = f"{name}"
 
-device = torch.device("cuda:0")
+# device = torch.device("cuda:0")
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
@@ -25,6 +29,7 @@ if not os.path.exists(models_dir):
 
 # Initialize Variables
 batch_size = 16
+de_biasing = True
 address_lines = int(input("Enter number of address and data lines: "))
 data_lines = address_lines
 n_layers = 4
@@ -61,10 +66,33 @@ for i in range(len(data)):
     bin_val_arr.append(int(bin_val[i]))
   data_bin.append(bin_val_arr)  
 
-for i in range(len(x_bin)):
-  print(x_bin[i], data_bin[i])  
+# for i in range(len(x_bin)):
+#   print(x_bin[i], data_bin[i])  
+if de_biasing == True:
+  data_bin_set = list(set(map(tuple, data_bin)))
+  repetition_dict = {i:0 for i in data_bin_set}
+  for i in range(len(data_bin)):
+    repetition_dict[tuple(data_bin[i])] += 1
+  repetition_dict = {k:v for k,v in sorted(repetition_dict.items(), key=lambda item: item[1], reverse=True)}
+  print(repetition_dict)
+  highest_repetition = repetition_dict[max(repetition_dict.items(), key=operator.itemgetter(1))[0]]
+  power_2 = smallest_power_2(highest_repetition)
+  de_biasing_bits = int(math.log2(power_2))
+  repetition_dict = {i:0 for i in data_bin_set}
+  for i in range(len(data_bin)):
+    data_val = data_bin[i]
+    extension_val = repetition_dict[tuple(data_bin[i])]
+    repetition_dict[tuple(data_bin[i])] += 1
+    extension_val_bin = np.binary_repr(extension_val, width=de_biasing_bits)
+    extension_bin = []
+    for j in range(len(extension_val_bin)):
+      extension_bin.append(int(extension_val_bin[j]))
+    appended_data = extension_bin + data_val
+    data_bin[i] = appended_data
+    print(appended_data)
+  data_lines = address_lines + de_biasing_bits
 
-for i in range(2000//(2**address_lines)):
+for i in range(2048//(2**address_lines)):
   for i in range(2**address_lines):
     x_bin.append(x_bin[i])
     data_bin.append(data_bin[i])
@@ -81,26 +109,29 @@ test_loader = Data.DataLoader(dataset=val_set, batch_size=batch_size, shuffle=Tr
 
 # Define classical and quantum devices.
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-qdevice = qml.device("default.qubit", wires=address_lines)
+qdevice = qml.device("default.qubit", wires=data_lines)
 
 # Define qram variational quantum circuit.
 @qml.qnode(qdevice, interface='torch')
 def qram(inputs, params, weights):
-    qml.AngleEmbedding(features=inputs, wires=range(address_lines))
+    if de_biasing == True:
+      qml.AngleEmbedding(features=inputs, wires=range(de_biasing_bits, data_lines))
+    else:
+      qml.AngleEmbedding(features=inputs, wires=range(data_lines))
     for l in range(n_layers):
         j = 0
-        for i in range(address_lines):
+        for i in range(data_lines):
             qml.RY(params[l*36+j],wires=i)
-            qml.RY(params[l*36+j+1],wires=(i+1)%address_lines)
-            qml.CNOT(wires=[i,(i+1)%address_lines])
-            qml.CRZ(params[l*36+j+2], wires=[i,(i+1)%address_lines])
-            qml.PauliX(wires=(i+1)%address_lines)
-            qml.CRX(params[l*36+j+3],wires=[i,(i+1)%address_lines])
+            qml.RY(params[l*36+j+1],wires=(i+1)%data_lines)
+            qml.CNOT(wires=[i,(i+1)%data_lines])
+            qml.CRZ(params[l*36+j+2], wires=[i,(i+1)%data_lines])
+            qml.PauliX(wires=(i+1)%data_lines)
+            qml.CRX(params[l*36+j+3],wires=[i,(i+1)%data_lines])
             j += 4
-    qml.StronglyEntanglingLayers(weights=weights, wires=range(address_lines))
+    qml.StronglyEntanglingLayers(weights=weights, wires=range(data_lines))
     return [qml.expval(qml.PauliZ(i)) for i in range(data_lines)]
 
-qram_weights = {"params":n_layers*36, "weights":(n_layers, address_lines, 3)}  
+qram_weights = {"params":n_layers*36, "weights":(n_layers, data_lines, 3)}  
 qram_layer = qml.qnn.TorchLayer(qram, qram_weights, init_method=torch.nn.init.normal_) 
 
 class Model(torch.nn.Module):
@@ -146,7 +177,7 @@ for epoch in range(qram_start_epoch, qram_epochs):
         cnt += 1
 
     losses.append(loss.item())
-    print(f"{epoch+1}/{batch}\t loss:{loss.item():.4f}\t Correct pred:{cnt}, Total:{total}, Average Hamming Distance:{total_hd/total}", end="\r")
+    print(f"{epoch+1}/{batch}\t loss:{loss.item():.4f}\t Correct pred:{cnt}, Total:{total}, Average Hamming Distance:{total_hd/(total-cnt)}", end="\r")
 
   curr_log += f"loss:{np.mean(losses):.4f}\t"
   print_and_save(curr_log, f"{log_dir}/qram_log.txt")
