@@ -29,14 +29,16 @@ if not os.path.exists(models_dir):
 
 # Initialize Variables
 batch_size = 16
-de_biasing = True
+de_biasing = False
 address_lines = int(input("Enter number of address and data lines: "))
 data_lines = address_lines
-n_layers = 4
+n_layers = 3
 qram_start_epoch = 0
 qram_epochs = 100
 qram_save_step = 10
 lr = 1e-3
+optimization_method = "bit_opt"
+repetition_penalty = True
 
 # Create train and test data
 x = list(range(2**address_lines))
@@ -66,15 +68,14 @@ for i in range(len(data)):
     bin_val_arr.append(int(bin_val[i]))
   data_bin.append(bin_val_arr)  
 
-# for i in range(len(x_bin)):
-#   print(x_bin[i], data_bin[i])  
+
+data_bin_set = list(set(map(tuple, data_bin)))
+repetition_dict = {i:0 for i in data_bin_set}
+for i in range(len(data_bin)):
+  repetition_dict[tuple(data_bin[i])] += 1
+repetition_dict = {k:v for k,v in sorted(repetition_dict.items(), key=lambda item: item[1], reverse=True)}
+
 if de_biasing == True:
-  data_bin_set = list(set(map(tuple, data_bin)))
-  repetition_dict = {i:0 for i in data_bin_set}
-  for i in range(len(data_bin)):
-    repetition_dict[tuple(data_bin[i])] += 1
-  repetition_dict = {k:v for k,v in sorted(repetition_dict.items(), key=lambda item: item[1], reverse=True)}
-  print(repetition_dict)
   highest_repetition = repetition_dict[max(repetition_dict.items(), key=operator.itemgetter(1))[0]]
   power_2 = smallest_power_2(highest_repetition)
   de_biasing_bits = int(math.log2(power_2))
@@ -93,9 +94,9 @@ if de_biasing == True:
   data_lines = address_lines + de_biasing_bits
 
 for i in range(2048//(2**address_lines)):
-  for i in range(2**address_lines):
-    x_bin.append(x_bin[i])
-    data_bin.append(data_bin[i])
+  for j in range(2**address_lines):
+    x_bin.append(x_bin[j])
+    data_bin.append(data_bin[j])
 
 x_bin = torch.FloatTensor(x_bin)
 data_bin = torch.FloatTensor(data_bin)
@@ -129,7 +130,11 @@ def qram(inputs, params, weights):
             qml.CRX(params[l*36+j+3],wires=[i,(i+1)%data_lines])
             j += 4
     qml.StronglyEntanglingLayers(weights=weights, wires=range(data_lines))
-    return [qml.expval(qml.PauliZ(i)) for i in range(data_lines)]
+    if optimization_method == "bit_opt":
+      return [qml.expval(qml.PauliZ(i)) for i in range(data_lines)]
+    elif optimization_method == "prob_max":
+      return qml.probs(wires = range(data_lines))
+
 
 qram_weights = {"params":n_layers*36, "weights":(n_layers, data_lines, 3)}  
 qram_layer = qml.qnn.TorchLayer(qram, qram_weights, init_method=torch.nn.init.normal_) 
@@ -162,22 +167,49 @@ for epoch in range(qram_start_epoch, qram_epochs):
   losses = []
   for batch, (x_bin, data_bin) in enumerate(dataloader):
     opt_qram.zero_grad()
-    pred = (model(x_bin)+1)/2
-    loss = torch.mean(torch.sum((pred - data_bin)**2, 1))
+    if optimization_method == "bit_opt":
+      pred = (model(x_bin)+1)/2
+      if repetition_penalty == True:
+        individual_loss = torch.sum((pred - data_bin)**2, 1)
+        for i in range(data_bin.shape[0]):
+          individual_loss[i] = repetition_dict[tuple(data_bin[i].tolist())] * individual_loss[i]
+        loss = torch.mean(individual_loss)
+      else:
+        loss = torch.mean(torch.sum((pred - data_bin)**2, 1))
+      calculated_loss = (pred-data_bin)**2
+      filter = torch.where(calculated_loss >= 0.25, True, False)
+      total_hd += torch.sum(filter==True).item()
+
+    elif optimization_method == "prob_max":
+      pred = model(x_bin)
+      index = torch.argmax(pred, 1)
+      prob = torch.zeros(data_bin.shape[0])
+      data_dec = torch.ones(data_bin.shape[0])
+      for i in range(data_bin.shape[0]):
+        data_dec[i] = bin_to_decimal(data_bin[i])
+      for i in range(data_bin.shape[0]):
+        prob[i] = pred[i][int(data_dec[i])]
+      loss = torch.mean(torch.sum((torch.ones(data_bin.shape[0]) - prob)**2))
+      hd = hamming_distance(index, data_dec, data_lines)
+      total_hd += torch.sum(hd).item()
     loss.backward()
     opt_qram.step()
-    calculated_loss = (pred-data_bin)**2
-    filter = torch.where(calculated_loss >= 0.25, True, False)
     total += x_bin.shape[0]
-    total_hd += torch.sum(filter==True).item()
-    for i in range(filter.shape[0]):
-      if True in filter[i]:
-        pass
-      else:
-        cnt += 1
+
+    for i in range(x_bin.shape[0]):
+      if optimization_method == "bit_opt":
+        if True in filter[i]:
+          pass
+        else:
+          cnt += 1
+      elif optimization_method == "prob_max":
+        if index[i] == data_dec[i]:
+          cnt += 1
+        else:
+          pass
 
     losses.append(loss.item())
-    print(f"{epoch+1}/{batch}\t loss:{loss.item():.4f}\t Correct pred:{cnt}, Total:{total}, Average Hamming Distance:{total_hd/(total-cnt)}", end="\r")
+    print(f"{epoch+1}/{batch}\t loss:{loss.item():.4f}\t Correct pred:{cnt}, Total:{total}, Average Hamming Distance:{total_hd/(total)}", end="\r")
 
   curr_log += f"loss:{np.mean(losses):.4f}\t"
   print_and_save(curr_log, f"{log_dir}/qram_log.txt")
