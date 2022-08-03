@@ -1,7 +1,8 @@
+# Code to run digit classification sims with QRAM (for 2 digits)
+
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-
 import torch
 import torch.nn as nn
 import pennylane as qml
@@ -28,7 +29,7 @@ qram_wires = 9
 n_qaux_layers = n_qram_layers = 3
 n_qclassifier_layers = 5
 seed = 1234
-n_qrams = 1
+n_qrams = 2
 qram_epochs = 200
 qram_start_epoch = 0
 qaux_epochs = 100
@@ -39,14 +40,25 @@ save_step = 50
 data = load_digits().data
 target = load_digits().target
 
-indice = np.where((target == 0) | (target == 1))
+label1 = int(input("Enter first label:"))
+label2 = int(input("Enter second label:"))
+
+
+indice = np.where((target == label1) | (target == label2))
 # Only keep samples with class 0 or 1.
 imgs, labels = torch.from_numpy(data[indice]).float(), torch.from_numpy(target[indice]).float()
+
+label_mapping = {label1:0, label2:1}
+
+labels[np.where((labels == label1))] = label_mapping[label1]
+labels[np.where((labels == label2))] = label_mapping[label2]
 
 zero_indices = np.where((labels == 0))
 one_indices = np.where((labels == 1))
 
-# Make address dataset corresconding to digits.
+
+
+# Make address dataset corresponding to digits.
 adds = []
 for i in range(len(imgs)):
     bin = np.binary_repr(i, width=9)
@@ -189,14 +201,14 @@ for epoch in range(qram_start_epoch, qram_epochs):
             print(f"{epoch+1}/{batch}\t cls:{cls}\t loss:{loss.item():.4f}", end="\r")
 
         curr_log += f"cls{cls}-loss:{np.mean(losses):.4f}\t"
-    print_and_save(curr_log, f"{log_dir}/qram_log.txt")
+    print_and_save(curr_log, f"{log_dir}/qram_{label1}{label2}_log.txt")
 
     if (epoch+1) % save_step == 0:
-        state_dict = {}
-        state_dict.update({f'qaux_{cls}_state_dict': model.qaux_layers[cls].state_dict() for cls in range(n_qrams)})
-        state_dict.update({f'qram_{cls}_state_dict': model.qram_layers[cls].state_dict() for cls in range(n_qrams)})
-        torch.save(state_dict,
-                    f"{models_dir}/qrams-{epoch+1}.pth")
+        torch.save({'qaux_0_state_dict': model.qaux_layers[0].state_dict(),
+                    'qaux_1_state_dict': model.qaux_layers[1].state_dict(),
+                    'qram_0_state_dict': model.qram_layers[0].state_dict(),
+                    'qram_1_state_dict': model.qram_layers[1].state_dict()},
+                    f"{models_dir}/qrams-{label1}{label2}-{epoch+1}.pth")
 
     # Fix qaux layer parameters.
     if (epoch+1) == qaux_epochs:
@@ -204,6 +216,10 @@ for epoch in range(qram_start_epoch, qram_epochs):
             for param in layer.parameters():
                 param.requires_grad = False
 
+# Import parameters if already trained
+# checkpoint = torch.load(f"{models_dir}/qrams-no-alternating-200.pth")
+# model.qaux_layers[0].load_state_dict(checkpoint['qaux_0_state_dict'])
+# model.qram_layers[0].load_state_dict(checkpoint['qram_0_state_dict'])
 
 # -------------------------------
 #  Phase 2: training qclassifier
@@ -252,7 +268,7 @@ for epoch in range(qcls_start_epochs, qcls_epochs):
 
     curr_log += f"train loss:{np.mean(train_losses):.4f}\t test loss:{np.mean(test_losses):.4f}\t"
     curr_log += f"train acc:{train_acc/(len(zero_train_loader.dataset)+len(one_train_loader.dataset)):.4f}\t test acc:{test_acc/(len(zero_test_loader.dataset)+len(one_test_loader.dataset)):.4f}"
-    print_and_save(curr_log, f"{log_dir}/model-log.txt")
+    print_and_save(curr_log, f"{log_dir}/model-{label1}{label2}-log.txt")
 
     if (epoch+1) % save_step == 0:
-        torch.save({'model_state_dict': model.state_dict()}, f"{models_dir}/model-{epoch+1}.pth")
+        torch.save({'model_state_dict': model.state_dict()}, f"{models_dir}/model-{label1}{label2}-{epoch+1}.pth")
